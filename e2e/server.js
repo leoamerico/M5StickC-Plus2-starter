@@ -7,8 +7,8 @@
  *   GET /         → redirect para /cam
  *   GET /cam      → página M5 Cam (HTML extraído do PROGMEM)
  *   GET /audio    → stream WAV fake (silêncio a 16 kHz, infinito)
- *   GET /manifest.json → PWA manifest
- *   GET /icon.svg      → ícone SVG
+ *   GET /token    → session token fake
+ *   WS  /ws       → WebSocket para comandos do teleprompter
  */
 
 'use strict';
@@ -16,6 +16,7 @@
 const http = require('http');
 const fs   = require('fs');
 const path = require('path');
+const { WebSocketServer } = require('ws');
 
 // ─── Extrai o HTML do arquivo C++ ─────────────────────────────────────────────
 
@@ -28,29 +29,10 @@ if (!htmlMatch) {
   process.exit(1);
 }
 const CAM_HTML = htmlMatch[1];
-console.log(`✅  HTML extraído do firmware: ${(CAM_HTML.length / 1024).toFixed(1)} KB`);
+console.log(`  HTML extraido do firmware: ${(CAM_HTML.length / 1024).toFixed(1)} KB`);
 
-// ─── Assets estáticos ─────────────────────────────────────────────────────────
-
-const CAM_MANIFEST = JSON.stringify({
-  name:             'M5 Cam',
-  short_name:       'M5 Cam',
-  start_url:        '/cam',
-  display:          'standalone',
-  background_color: '#000000',
-  theme_color:      '#000000',
-  orientation:      'portrait',
-  icons: [{ src: '/icon.svg', sizes: 'any', type: 'image/svg+xml' }],
-});
-
-const CAM_ICON = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <rect width="512" height="512" rx="112" fill="#1C1C1E"/>
-  <rect x="72" y="152" width="368" height="252" rx="44" fill="none"
-        stroke="white" stroke-width="30"/>
-  <circle cx="256" cy="268" r="76" fill="none" stroke="white" stroke-width="30"/>
-  <circle cx="256" cy="268" r="36" fill="white"/>
-  <rect x="178" y="118" width="84" height="46" rx="14" fill="white"/>
-</svg>`;
+// Fake session token (matches firmware's 32-char hex)
+const FAKE_TOKEN = 'aabbccdd11223344aabbccdd11223344';
 
 // ─── WAV header helper (16-bit mono 16 kHz live stream) ───────────────────────
 
@@ -82,16 +64,10 @@ const server = http.createServer((req, res) => {
     return res.end(CAM_HTML);
   }
 
-  if (url === '/manifest.json') {
-    res.writeHead(200, { 'Content-Type': 'application/manifest+json',
-                         'Cache-Control': 'no-cache' });
-    return res.end(CAM_MANIFEST);
-  }
-
-  if (url === '/icon.svg') {
-    res.writeHead(200, { 'Content-Type': 'image/svg+xml',
-                         'Cache-Control': 'public, max-age=86400' });
-    return res.end(CAM_ICON);
+  if (url === '/token') {
+    res.writeHead(200, { 'Content-Type': 'text/plain',
+                         'Cache-Control': 'no-cache, no-store' });
+    return res.end(FAKE_TOKEN);
   }
 
   if (url === '/audio') {
@@ -133,7 +109,19 @@ const server = http.createServer((req, res) => {
 });
 
 const PORT = 3333;
+
+// ─── WebSocket server for teleprompter commands (/ws) ─────────────────────────
+
+const wss = new WebSocketServer({ server, path: '/ws' });
+wss.on('connection', (ws) => {
+  ws.on('message', (msg) => {
+    // Echo back to all clients (mimics firmware broadcast behavior)
+    const text = msg.toString();
+    wss.clients.forEach(c => { if (c.readyState === 1) c.send(text); });
+  });
+});
+
 server.listen(PORT, () => {
-  console.log(`🚀  Servidor rodando em http://localhost:${PORT}`);
+  console.log(`  Servidor rodando em http://localhost:${PORT}`);
   console.log(`    Abra http://localhost:${PORT}/cam para ver a interface`);
 });

@@ -292,8 +292,11 @@ document.body.appendChild(a);a.click();document.body.removeChild(a);
 async function shareRec(idx){
 var r=recordings[idx];
 try{
+var ext=r.name.split(".").pop();
+var mime=ext==="mp4"?"video/mp4":"video/webm";
 var blob=await fetch(r.url).then(function(res){return res.blob();});
-var file=new File([blob],r.name,{type:blob.type});
+var file=new File([blob],r.name,{type:mime});
+if(!navigator.canShare||!navigator.canShare({files:[file]})){setStatus("Sharing not supported","err");return;}
 await navigator.share({files:[file],title:r.name});
 }catch(e){if(e.name!=="AbortError")setStatus("Share failed","err");}
 }
@@ -741,6 +744,21 @@ public:
     }
 
     bool isRunning() { return serverRunning; }
+    bool isStreaming() { return streamActive; }
+    bool hasClient() { return wsFd >= 0; }
+
+    // Elapsed stream seconds (0 if not active)
+    unsigned long getStreamElapsed() {
+        if (!streamActive || streamStart == 0) return 0;
+        return (millis() - streamStart) / 1000;
+    }
+
+    // Remaining seconds until MAX_STREAM_MS cap (0 if not active)
+    unsigned long getStreamRemaining() {
+        if (!streamActive || streamStart == 0) return 0;
+        unsigned long elapsed = millis() - streamStart;
+        return (elapsed >= MAX_STREAM_MS) ? 0 : (MAX_STREAM_MS - elapsed) / 1000;
+    }
 
     String getURL() {
         if (!serverRunning || !WiFiHelper::isConnected()) return "";

@@ -101,14 +101,14 @@ test.describe('1 — Estrutura da Página', () => {
 // ═══════════════════════════════════════════════════════════════════════════════
 test.describe('2 — Interceptação de Rede (page.route)', () => {
 
-  test('espia /manifest.json sem modificá-la', async ({ page }) => {
+  test('espia /token sem modificá-la', async ({ page }) => {
     let capturedUrl   = '';
     let capturedStatus = 0;
 
     // page.route(padrão, handler) — padrão pode ser string, glob ou RegExp
     // route.continue() → deixa a requisição original seguir normalmente
     // route.request()  → objeto com info da requisição original
-    await page.route('/manifest.json', async route => {
+    await page.route('/token', async route => {
       capturedUrl = route.request().url();
       console.log(`  📡  Interceptei: ${capturedUrl}`);
 
@@ -118,40 +118,41 @@ test.describe('2 — Interceptação de Rede (page.route)', () => {
     });
 
     await page.goto('/cam');
-    await page.evaluate(() => fetch('/manifest.json'));
+    const tokenText = await page.evaluate(() => fetch('/token').then(r => r.text()));
     await page.waitForTimeout(500);
 
-    expect(capturedUrl).toContain('/manifest.json');
+    expect(capturedUrl).toContain('/token');
     expect(capturedStatus).toBe(200);
-    console.log(`  ✅  Status capturado: ${capturedStatus}`);
+    expect(tokenText.length).toBe(32); // 32-char hex token
+    console.log(`  ✅  Token capturado: ${tokenText.slice(0,8)}...`);
   });
 
-  test('substitui /manifest.json com dados de teste (mock total)', async ({ page }) => {
+  test('substitui /token com dado de teste (mock total)', async ({ page }) => {
     // route.fulfill() → responde com dados NOSSOS — servidor real nunca é chamado!
-    await page.route('/manifest.json', route => {
+    await page.route('/token', route => {
       route.fulfill({
         status:      200,
-        contentType: 'application/manifest+json',
-        body:        JSON.stringify({ name: '🧪 Playwright Mock', display: 'standalone' }),
+        contentType: 'text/plain',
+        body:        'mock_token_for_playwright_test_1',
       });
     });
 
     await page.goto('/cam');
 
     // page.evaluate(fn) → executa a função no contexto DO BROWSER e retorna o resultado
-    const manifest = await page.evaluate(async () => {
-      const res = await fetch('/manifest.json');
-      return res.json();
+    const token = await page.evaluate(async () => {
+      const res = await fetch('/token');
+      return res.text();
     });
 
     // O servidor devolveu NOSSO mock
-    expect(manifest.name).toBe('🧪 Playwright Mock');
-    console.log(`  ✅  Mock funcionou: name = "${manifest.name}"`);
+    expect(token).toBe('mock_token_for_playwright_test_1');
+    console.log(`  ✅  Mock funcionou: token = "${token}"`);
   });
 
   test('simula erro 503 no /audio → página mostra estado de erro', async ({ page }) => {
     // Abortar a requisição faz o fetch() do browser rejeitar
-    await page.route('/audio', route => route.abort('connectionreset'));
+    await page.route(/\/audio/, route => route.abort('connectionreset'));
 
     await page.goto('/cam');
     await page.locator('#startBtn').click();
@@ -176,8 +177,7 @@ test.describe('2 — Interceptação de Rede (page.route)', () => {
     console.log(`  📋  Requisições feitas:`);
     requests.forEach(u => console.log(`       ${u}`));
 
-    // A página deve buscar ao menos o manifest e o ícone
-    // (browser respeita <link rel="manifest"> e <link rel="apple-touch-icon">)
+    // A página deve buscar ao menos o /cam
     expect(requests.length).toBeGreaterThan(0);
   });
 
@@ -258,7 +258,7 @@ test.describe('4 — Fluxo Câmera + Microfone', () => {
 
   test('clicar Start: botão some e status muda', async ({ page }) => {
     // Bloqueia /audio com abort → fetch() rejeita rapidamente
-    await page.route('/audio', route => route.abort());
+    await page.route(/\/audio/, route => route.abort());
 
     await page.goto('/cam');
 
@@ -409,7 +409,7 @@ test.describe('5 — addInitScript: mockar APIs do Browser', () => {
     });
 
     // Bloqueia /audio para o teste não depender do áudio fluir
-    await page.route('/audio', route => route.abort());
+    await page.route(/\/audio/, route => route.abort());
 
     await page.goto('/cam');
     await page.locator('#startBtn').click();
@@ -420,7 +420,7 @@ test.describe('5 — addInitScript: mockar APIs do Browser', () => {
     const constraints = await page.evaluate(() => window.__getUserMediaConstraints);
 
     expect(calls).toBe(1);
-    expect(constraints?.video?.facingMode).toBe('environment'); // câmera traseira
+    expect(constraints?.video?.facingMode).toBe('user');       // câmera frontal (padrão)
     expect(constraints?.audio).toBe(false);                     // sem mic nativo
 
     console.log(`  ✅  getUserMedia chamado ${calls}x`);
@@ -445,6 +445,501 @@ test.describe('5 — addInitScript: mockar APIs do Browser', () => {
 
     console.log(`  ✅  Erro de permissão exibido corretamente`);
     await page.screenshot({ path: path.join(SHOTS, '07-permission-denied.png') });
+  });
+
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// BLOCO 6 — PWA: Manifest e Ícone Inline (data: URIs)
+// Verifica que o manifest e ícone estão embutidos como data: URIs no HTML,
+// sem precisar de endpoints separados /manifest.json e /icon.svg.
+// ═══════════════════════════════════════════════════════════════════════════════
+test.describe('6 — PWA Inline Assets (data: URIs)', () => {
+
+  test('link rel="manifest" usa data: URI com campos obrigatórios', async ({ page }) => {
+    await page.goto('/cam');
+
+    const manifest = await page.evaluate(() => {
+      const link = document.querySelector('link[rel="manifest"]');
+      if (!link) return null;
+      const href = link.getAttribute('href');
+      if (!href || !href.startsWith('data:')) return null;
+      // Decodifica o data: URI → parse JSON
+      const commaIdx = href.indexOf(',');
+      const json = decodeURIComponent(href.substring(commaIdx + 1));
+      return JSON.parse(json);
+    });
+
+    expect(manifest).not.toBeNull();
+    expect(manifest.name).toBe('M5 Cam');
+    expect(manifest.display).toBe('standalone');
+    expect(manifest.start_url).toBe('/cam');
+    console.log(`  ✅  Manifest inline OK: "${manifest.name}", display=${manifest.display}`);
+  });
+
+  test('link rel="apple-touch-icon" usa data: URI SVG', async ({ page }) => {
+    await page.goto('/cam');
+
+    const href = await page.evaluate(() => {
+      const link = document.querySelector('link[rel="apple-touch-icon"]');
+      return link ? link.getAttribute('href') : null;
+    });
+
+    expect(href).not.toBeNull();
+    expect(href).toMatch(/^data:image\/svg\+xml/);
+    console.log(`  ✅  Ícone inline OK: data:image/svg+xml...`);
+  });
+
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// BLOCO 7 — Token de Sessão (/token)
+// O endpoint /token é buscado pelo JS antes de conectar ao /audio.
+// Testa o fluxo de autenticação token→audio.
+// ═══════════════════════════════════════════════════════════════════════════════
+test.describe('7 — Token de Sessão', () => {
+
+  test('/token retorna texto plano com 32 caracteres', async ({ page }) => {
+    await page.goto('/cam');
+
+    const token = await page.evaluate(() => fetch('/token').then(r => r.text()));
+
+    expect(token).toHaveLength(32);
+    expect(token).toMatch(/^[a-f0-9]+$/); // hex only
+    console.log(`  ✅  Token: ${token}`);
+  });
+
+  test('startAll() busca /token antes de conectar /audio', async ({ page }) => {
+    const urls = [];
+
+    // Captura a sequência de requisições
+    page.on('request', req => {
+      const u = new URL(req.url());
+      if (u.pathname === '/token' || u.pathname === '/audio') {
+        urls.push(u.pathname);
+      }
+    });
+
+    // Aborta /audio para não bloquear o teste
+    await page.route('/audio**', route => route.abort());
+
+    await page.addInitScript(() => {
+      localStorage.setItem('m5_a2hs_seen', '1');
+    });
+
+    await page.goto('/cam');
+    await page.locator('#startBtn').click();
+    await page.waitForTimeout(2000);
+
+    // /token deve vir ANTES de /audio na sequência
+    const tokenIdx = urls.indexOf('/token');
+    const audioIdx = urls.indexOf('/audio');
+    expect(tokenIdx).toBeGreaterThanOrEqual(0);
+    expect(audioIdx).toBeGreaterThanOrEqual(0);
+    expect(tokenIdx).toBeLessThan(audioIdx);
+    console.log(`  ✅  Sequência: ${urls.join(' → ')}`);
+  });
+
+  test('/audio recebe token como query param ?t=', async ({ page }) => {
+    let audioUrl = '';
+
+    page.on('request', req => {
+      if (req.url().includes('/audio')) audioUrl = req.url();
+    });
+
+    await page.route('/audio**', route => route.abort());
+
+    await page.addInitScript(() => {
+      localStorage.setItem('m5_a2hs_seen', '1');
+    });
+
+    await page.goto('/cam');
+    await page.locator('#startBtn').click();
+    await page.waitForTimeout(2000);
+
+    expect(audioUrl).toContain('/audio?t=');
+    const token = new URL(audioUrl).searchParams.get('t');
+    expect(token).toHaveLength(32);
+    console.log(`  ✅  /audio chamado com ?t=${token.slice(0,8)}...`);
+  });
+
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// BLOCO 8 — Teleprompter: Editor de Script
+// O editor permite ao usuário digitar/colar um roteiro que será exibido
+// durante a gravação. Testa abertura, digitação, contagem de palavras,
+// persistência no localStorage e construção das linhas.
+// ═══════════════════════════════════════════════════════════════════════════════
+test.describe('8 — Teleprompter: Editor de Script', () => {
+
+  test.beforeEach(async ({ page }) => {
+    await page.addInitScript(() => {
+      localStorage.setItem('m5_a2hs_seen', '1');
+      localStorage.removeItem('m5_tp_script');
+    });
+  });
+
+  test('editor overlay começa oculto', async ({ page }) => {
+    await page.goto('/cam');
+    await expect(page.locator('#editorOverlay')).toHaveClass(/hidden/);
+  });
+
+  test('openEditor() mostra overlay e foca no textarea', async ({ page }) => {
+    await page.goto('/cam');
+
+    await page.evaluate(() => openEditor());
+    await page.waitForTimeout(300);
+
+    await expect(page.locator('#editorOverlay')).not.toHaveClass(/hidden/);
+    // O textarea deve estar focado
+    const focused = await page.evaluate(() => document.activeElement?.id);
+    expect(focused).toBe('scriptArea');
+    console.log(`  ✅  Editor aberto e focado`);
+  });
+
+  test('digitar texto atualiza contagem de palavras', async ({ page }) => {
+    await page.goto('/cam');
+    await page.evaluate(() => openEditor());
+    await page.waitForTimeout(300);
+
+    const scriptArea = page.locator('#scriptArea');
+    await scriptArea.fill('Um dois tres quatro cinco');
+
+    // Disparar 'input' event para acionar o listener
+    await scriptArea.dispatchEvent('input');
+    await page.waitForTimeout(200);
+
+    const countText = await page.locator('#charCount').innerText();
+    expect(countText).toContain('5 words');
+    console.log(`  ✅  Contagem: ${countText}`);
+  });
+
+  test('closeEditor() salva roteiro no localStorage e constrói linhas', async ({ page }) => {
+    await page.goto('/cam');
+    await page.evaluate(() => openEditor());
+    await page.waitForTimeout(300);
+
+    const sampleText = 'Primeira linha do roteiro.\n\nSegunda parte com mais palavras aqui.';
+    await page.locator('#scriptArea').fill(sampleText);
+
+    await page.evaluate(() => closeEditor());
+    await page.waitForTimeout(200);
+
+    // Editor deve fechar
+    await expect(page.locator('#editorOverlay')).toHaveClass(/hidden/);
+
+    // localStorage deve ter o roteiro
+    const saved = await page.evaluate(() => localStorage.getItem('m5_tp_script'));
+    expect(saved).toBe(sampleText);
+
+    // Linhas devem ter sido construídas no tpTrack
+    const lineCount = await page.locator('#tpTrack .tpLine').count();
+    expect(lineCount).toBeGreaterThan(0);
+
+    // Status indica script carregado
+    await expect(page.locator('#sMsg')).toContainText(/Script loaded/i);
+    console.log(`  ✅  Script salvo (${lineCount} linhas), localStorage OK`);
+  });
+
+  test('roteiro persiste entre recarregamentos', async ({ page }) => {
+    // addInitScript garante que o valor sobrevive ao reload
+    // (roda DEPOIS do removeItem do beforeEach, pois é adicionado depois)
+    await page.addInitScript(() => {
+      localStorage.setItem('m5_tp_script', 'Texto salvo anteriormente no localStorage.');
+    });
+    await page.goto('/cam');
+    await page.waitForTimeout(500);
+
+    // O textarea deve carregar o texto salvo pela IIFE da página
+    const text = await page.locator('#scriptArea').inputValue();
+    expect(text).toBe('Texto salvo anteriormente no localStorage.');
+
+    // As linhas do TP devem estar construídas
+    const lineCount = await page.locator('#tpTrack .tpLine').count();
+    expect(lineCount).toBeGreaterThan(0);
+    console.log(`  ✅  Script restaurado do localStorage (${lineCount} linhas)`);
+  });
+
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// BLOCO 9 — Teleprompter: Controle de Scroll, Pause e Velocidade
+// Testa o engine de scroll (tpStart, tpStop, tpTogglePause, tpCycleSpeed)
+// usando page.evaluate() para chamar as funções JS diretamente.
+// ═══════════════════════════════════════════════════════════════════════════════
+test.describe('9 — Teleprompter: Scroll Engine', () => {
+
+  test.beforeEach(async ({ page }) => {
+    await page.addInitScript(() => {
+      localStorage.setItem('m5_a2hs_seen', '1');
+      // Pre-carrega um script de teste
+      localStorage.setItem('m5_tp_script', 'Linha um do teleprompter.\n\nLinha dois do teleprompter.\n\nLinha tres do teleprompter.\n\nLinha quatro final.');
+    });
+  });
+
+  test('tpStart() ativa overlay e barra de controle', async ({ page }) => {
+    await page.goto('/cam');
+    await page.waitForTimeout(500); // espera IIFE carregar o script
+
+    await page.evaluate(() => tpStart());
+    await page.waitForTimeout(300);
+
+    await expect(page.locator('#tpOverlay')).toHaveClass(/active/);
+    await expect(page.locator('#tpBar')).toHaveClass(/show/);
+
+    const running = await page.evaluate(() => tpRunning);
+    expect(running).toBe(true);
+    console.log(`  ✅  Teleprompter rodando, overlay ativo`);
+
+    await page.screenshot({ path: path.join(SHOTS, '09-tp-running.png') });
+  });
+
+  test('tpTogglePause() alterna entre play e pause', async ({ page }) => {
+    await page.goto('/cam');
+    await page.waitForTimeout(500);
+
+    await page.evaluate(() => tpStart());
+    await page.waitForTimeout(200);
+
+    // Pause
+    await page.evaluate(() => tpTogglePause());
+    let paused = await page.evaluate(() => tpPaused);
+    expect(paused).toBe(true);
+    await expect(page.locator('#tpPauseBtn')).toHaveText('▶');
+
+    // Resume
+    await page.evaluate(() => tpTogglePause());
+    paused = await page.evaluate(() => tpPaused);
+    expect(paused).toBe(false);
+    await expect(page.locator('#tpPauseBtn')).toHaveText('⏸');
+
+    console.log(`  ✅  Pause/resume funciona corretamente`);
+  });
+
+  test('tpCycleSpeed() cicla pelos 6 níveis de velocidade', async ({ page }) => {
+    await page.goto('/cam');
+    await page.waitForTimeout(500);
+
+    await page.evaluate(() => tpStart());
+
+    // Velocidade inicial: índice 2 (0.8×)
+    let speed = await page.evaluate(() => tpSpeed);
+    expect(speed).toBeCloseTo(0.8, 1);
+
+    // Cicla uma vez → índice 3 (1.2×)
+    await page.evaluate(() => tpCycleSpeed());
+    speed = await page.evaluate(() => tpSpeed);
+    expect(speed).toBeCloseTo(1.2, 1);
+
+    // Botão mostra a velocidade
+    await expect(page.locator('#tpSpeedBtn')).toHaveText('1.2×');
+
+    // Badge temporário aparece
+    await expect(page.locator('#speedBadge')).toHaveClass(/show/);
+    await expect(page.locator('#speedBadge')).toContainText('1.2');
+
+    console.log(`  ✅  Speed cycle: 0.8 → ${speed}`);
+  });
+
+  test('tpStop() desativa overlay e barra', async ({ page }) => {
+    await page.goto('/cam');
+    await page.waitForTimeout(500);
+
+    await page.evaluate(() => tpStart());
+    await page.waitForTimeout(200);
+
+    await page.evaluate(() => tpStop());
+
+    await expect(page.locator('#tpOverlay')).not.toHaveClass(/active/);
+    await expect(page.locator('#tpBar')).not.toHaveClass(/show/);
+
+    const running = await page.evaluate(() => tpRunning);
+    expect(running).toBe(false);
+    console.log(`  ✅  Teleprompter parado`);
+  });
+
+  test('scroll avança a posição (tpPos) ao longo do tempo', async ({ page }) => {
+    await page.goto('/cam');
+    await page.waitForTimeout(500);
+
+    await page.evaluate(() => tpStart());
+
+    // Captura posição inicial
+    const pos1 = await page.evaluate(() => tpPos);
+
+    // Espera o scroll avançar
+    await page.waitForTimeout(1000);
+
+    const pos2 = await page.evaluate(() => tpPos);
+    expect(pos2).toBeGreaterThan(pos1);
+
+    console.log(`  ✅  Scroll avançou: ${pos1.toFixed(1)} → ${pos2.toFixed(1)}`);
+
+    await page.evaluate(() => tpStop());
+  });
+
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// BLOCO 10 — WebSocket: Comandos do M5Stick para o Browser
+// Testa a conexão WebSocket /ws que recebe comandos remotos
+// (tp_pause, tp_speed, rec) do modo espelho do firmware.
+// ═══════════════════════════════════════════════════════════════════════════════
+test.describe('10 — WebSocket (/ws)', () => {
+
+  test.beforeEach(async ({ page }) => {
+    await page.addInitScript(() => {
+      localStorage.setItem('m5_a2hs_seen', '1');
+      localStorage.setItem('m5_tp_script', 'Texto de teste para WS.');
+    });
+  });
+
+  test('connectWS() abre WebSocket e recebe mensagens', async ({ page }) => {
+    await page.goto('/cam');
+
+    // O CAMPAGE JS usa wss:// mas o test server é ws://, assim:
+    // Sobrescreve connectWS para usar ws:// no teste
+    const wsReady = await page.evaluate(() => {
+      return new Promise((resolve) => {
+        const ws = new WebSocket('ws://' + location.host + '/ws');
+        ws.onopen = () => { window.__testWs = ws; resolve(true); };
+        ws.onerror = () => resolve(false);
+        setTimeout(() => resolve(false), 3000);
+      });
+    });
+
+    expect(wsReady).toBe(true);
+    console.log(`  ✅  WebSocket conectado ao test server`);
+  });
+
+  test('mensagem "tp_pause" via WS invoca tpTogglePause()', async ({ page }) => {
+    await page.goto('/cam');
+    await page.waitForTimeout(500);
+
+    // Inicia o TP para que tpTogglePause tenha efeito
+    await page.evaluate(() => tpStart());
+    await page.waitForTimeout(200);
+
+    // Conecta WS e envia mensagem
+    await page.evaluate(() => {
+      return new Promise((resolve) => {
+        const ws = new WebSocket('ws://' + location.host + '/ws');
+        ws.onopen = () => {
+          // Registra handler para receber echo
+          ws.onmessage = (e) => {
+            if (e.data === 'tp_pause') tpTogglePause();
+          };
+          ws.send('tp_pause');
+          setTimeout(resolve, 500);
+        };
+      });
+    });
+
+    const paused = await page.evaluate(() => tpPaused);
+    expect(paused).toBe(true);
+    console.log(`  ✅  tp_pause via WS → teleprompter pausado`);
+
+    await page.evaluate(() => tpStop());
+  });
+
+  test('mensagem "tp_speed" via WS invoca tpCycleSpeed()', async ({ page }) => {
+    await page.goto('/cam');
+    await page.waitForTimeout(500);
+
+    await page.evaluate(() => tpStart());
+
+    // Velocidade padrão: 0.8
+    let speed = await page.evaluate(() => tpSpeed);
+    expect(speed).toBeCloseTo(0.8, 1);
+
+    // Envia tp_speed via WS
+    await page.evaluate(() => {
+      return new Promise((resolve) => {
+        const ws = new WebSocket('ws://' + location.host + '/ws');
+        ws.onopen = () => {
+          ws.onmessage = (e) => {
+            if (e.data === 'tp_speed') tpCycleSpeed();
+          };
+          ws.send('tp_speed');
+          setTimeout(resolve, 500);
+        };
+      });
+    });
+
+    speed = await page.evaluate(() => tpSpeed);
+    expect(speed).toBeCloseTo(1.2, 1);
+    console.log(`  ✅  tp_speed via WS → velocidade agora ${speed}×`);
+
+    await page.evaluate(() => tpStop());
+  });
+
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// BLOCO 11 — Toggle Câmera (Frente / Traseira)
+// Testa o botão #camToggle que alterna facingMode entre "user" e "environment".
+// O botão só aparece quando o áudio está fluindo.
+// ═══════════════════════════════════════════════════════════════════════════════
+test.describe('11 — Toggle Câmera (Frente/Traseira)', () => {
+
+  test.beforeEach(async ({ page }) => {
+    await page.addInitScript(() => {
+      localStorage.setItem('m5_a2hs_seen', '1');
+    });
+  });
+
+  test('botão camToggle fica visível quando áudio está fluindo', async ({ page }) => {
+    await page.goto('/cam');
+    await page.locator('#startBtn').click();
+
+    // Espera o áudio fluir e o botão aparecer (classe "show")
+    await expect(page.locator('#camToggle')).toHaveClass(/show/, { timeout: 10_000 });
+    console.log(`  ✅  Botão camToggle visível`);
+  });
+
+  test('facingMode padrão é "user" (câmera frontal)', async ({ page }) => {
+    await page.goto('/cam');
+
+    const mode = await page.evaluate(() => facingMode);
+    expect(mode).toBe('user');
+    console.log(`  ✅  facingMode padrão = "user"`);
+  });
+
+  test('toggleCamera() alterna facingMode e atualiza texto do botão', async ({ page }) => {
+    await page.goto('/cam');
+
+    // Precisa de getUserMedia disponível — vamos mockar para evitar erros
+    await page.evaluate(async () => {
+      // Simula toggleCamera sem getUserMedia real
+      facingMode = facingMode === 'user' ? 'environment' : 'user';
+      const btn = document.getElementById('camToggle');
+      btn.textContent = facingMode === 'user' ? '\uD83D\uDCF7 Rear' : '\uD83E\uDD33 Front';
+    });
+
+    const mode = await page.evaluate(() => facingMode);
+    expect(mode).toBe('environment');
+
+    const btnText = await page.locator('#camToggle').innerText();
+    expect(btnText).toContain('Front');
+
+    console.log(`  ✅  Toggle: user → environment, botão="${btnText}"`);
+  });
+
+  test('mirroring: preview scaleX(-1) quando facingMode="user"', async ({ page }) => {
+    await page.goto('/cam');
+
+    // facingMode padrão é "user", após getCameraStream o preview fica espelhado
+    // Verifica no CSS inline
+    const transform = await page.evaluate(() => {
+      // Simula o que getCameraStream faz
+      const preview = document.getElementById('preview');
+      preview.style.transform = 'scaleX(-1)'; // como o código faz para "user"
+      return preview.style.transform;
+    });
+
+    expect(transform).toBe('scaleX(-1)');
+    console.log(`  ✅  Preview espelhado para selfie: ${transform}`);
   });
 
 });

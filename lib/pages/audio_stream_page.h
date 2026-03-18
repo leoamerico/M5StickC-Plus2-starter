@@ -97,35 +97,71 @@ private:
             case ST_STREAMING: {
                 String url = audioStream->getURL();
 
+                // LIVE indicator + URL
                 M5.Display.setTextSize(1);
                 M5.Display.setTextColor(TFT_GREEN);
-                M5.Display.setCursor(6, 20);
-                M5.Display.print("Streaming  LIVE");
+                M5.Display.setCursor(6, 18);
+                M5.Display.print("LIVE");
 
-                M5.Display.setTextColor(TFT_WHITE);
-                M5.Display.setCursor(6, 38);
-                M5.Display.print("Open in iPhone Safari:");
-
-                // URL, split into two lines if long
                 M5.Display.setTextColor(TFT_CYAN);
-                M5.Display.setCursor(6, 54);
-                if (url.length() <= 22) {
-                    M5.Display.print(url.c_str());
-                } else {
-                    // show IP + path on two rows
-                    M5.Display.print(url.substring(0, 22).c_str());
-                    M5.Display.setCursor(6, 70);
-                    M5.Display.print(url.substring(22).c_str());
-                }
+                M5.Display.setCursor(36, 18);
+                M5.Display.print(url.c_str());
 
-                M5.Display.setTextSize(1);
-                M5.Display.setTextColor(TFT_DARKGREY);
-                M5.Display.setCursor(6, 90);
+                // ── Real-time HUD ──
                 int rssi = WiFiHelper::getSignalStrength();
-                M5.Display.printf("WiFi RSSI: %d dBm", rssi);
+                unsigned long elapsed = audioStream->getStreamElapsed();
+                unsigned long remaining = audioStream->getStreamRemaining();
+                uint32_t heap = ESP.getFreeHeap() / 1024;
+                float cpuTemp = temperatureRead();
+                bool wsClient = audioStream->hasClient();
+                bool streaming = audioStream->isStreaming();
 
-                M5.Display.setCursor(4, SCREEN_H - 10);
-                M5.Display.print("B:pause TP  PWR:speed  hold B:stop");
+                // Stream time: elapsed / remaining
+                M5.Display.setTextColor(TFT_WHITE);
+                M5.Display.setCursor(6, 34);
+                M5.Display.printf("Time  %lu:%02lu / %lu:%02lu left",
+                    elapsed / 60, elapsed % 60,
+                    remaining / 60, remaining % 60);
+
+                // WiFi signal bar
+                M5.Display.setCursor(6, 48);
+                uint16_t rssiColor = (rssi > -60) ? TFT_GREEN : (rssi > -75) ? TFT_YELLOW : TFT_RED;
+                M5.Display.setTextColor(rssiColor);
+                M5.Display.printf("WiFi  %d dBm", rssi);
+
+                // Heap
+                M5.Display.setCursor(140, 48);
+                uint16_t heapColor = (heap > 80) ? TFT_GREEN : (heap > 40) ? TFT_YELLOW : TFT_RED;
+                M5.Display.setTextColor(heapColor);
+                M5.Display.printf("Heap %luK", heap);
+
+                // CPU temp
+                M5.Display.setCursor(6, 62);
+                uint16_t tempColor = (cpuTemp < 60) ? TFT_GREEN : (cpuTemp < 75) ? TFT_YELLOW : TFT_RED;
+                M5.Display.setTextColor(tempColor);
+                M5.Display.printf("CPU   %.0f C", cpuTemp);
+
+                // Client + stream status
+                M5.Display.setCursor(140, 62);
+                M5.Display.setTextColor(wsClient ? TFT_GREEN : TFT_DARKGREY);
+                M5.Display.print(wsClient ? "WS " : "WS -");
+                M5.Display.setCursor(185, 62);
+                M5.Display.setTextColor(streaming ? TFT_GREEN : TFT_DARKGREY);
+                M5.Display.print(streaming ? "MIC " : "MIC -");
+
+                // Separator line
+                M5.Display.drawFastHLine(6, 77, SCREEN_W - 12, 0x2945);
+
+                // Mic audio indicator (visual bar)
+                M5.Display.setCursor(6, 82);
+                M5.Display.setTextColor(TFT_DARKGREY);
+                M5.Display.print("Open Safari on iPhone");
+
+                // Bottom bar: button hints
+                M5.Display.fillRect(0, SCREEN_H - 14, SCREEN_W, 14, 0x1082);
+                M5.Display.setCursor(4, SCREEN_H - 11);
+                M5.Display.setTextColor(TFT_DARKGREY);
+                M5.Display.print("B:tp  PWR:spd  hold B:stop");
                 break;
             }
             case ST_ERROR: {
@@ -195,9 +231,9 @@ public:
     }
 
     void loop() override {
-        // Refresh RSSI indicator while streaming (every 5s)
+        // Refresh HUD metrics while streaming (every 2s)
         static unsigned long lastRefresh = 0;
-        if (state == ST_STREAMING && millis() - lastRefresh > 5000) {
+        if (state == ST_STREAMING && millis() - lastRefresh > 2000) {
             drawScreen();
             lastRefresh = millis();
         }
