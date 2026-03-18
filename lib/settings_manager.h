@@ -23,6 +23,7 @@ private:
         bool time24h;
         bool autoSleep;
         uint16_t autoSleepDelay;
+        bool raiseToWake;
     } cache;
     
     SettingsManager() {
@@ -52,6 +53,7 @@ public:
         cache.autoSleep = prefs.getBool("auto_sleep", true);
         cache.autoSleepDelay = prefs.getUShort("sleep_delay", 15);
         if (cache.autoSleepDelay < 5) cache.autoSleepDelay = 5; // Never below 5s (guards NVS corruption)
+        cache.raiseToWake = prefs.getBool("raise_wake", true);
         
         resetInactivityTimer();
         prefs.end();
@@ -61,6 +63,7 @@ public:
         cache.time24h = true;
         cache.autoSleep = true;
         cache.autoSleepDelay = 15;
+        cache.raiseToWake = true;
 #endif
     }
     
@@ -70,6 +73,7 @@ public:
     bool getTime24h() { return cache.time24h; }
     bool getAutoSleep() { return cache.autoSleep; }
     uint16_t getAutoSleepDelay() { return cache.autoSleepDelay; }
+    bool getRaiseToWake() { return cache.raiseToWake; }
     
     // SETTERS (update cache + save to NVS)
     void setUiSound(bool value) {
@@ -104,6 +108,15 @@ public:
 #ifndef UNIT_TEST
         prefs.begin("settings", false);
         prefs.putUShort("sleep_delay", seconds);
+        prefs.end();
+#endif
+    }
+    
+    void setRaiseToWake(bool value) {
+        cache.raiseToWake = value;
+#ifndef UNIT_TEST
+        prefs.begin("settings", false);
+        prefs.putBool("raise_wake", value);
         prefs.end();
 #endif
     }
@@ -159,6 +172,7 @@ public:
         Serial.printf("Time Format: %s\n", cache.time24h ? "24h" : "12h");
         Serial.printf("Auto Sleep: %s\n", cache.autoSleep ? "ON" : "OFF");
         Serial.printf("Sleep Delay: %d s\n", cache.autoSleepDelay);
+        Serial.printf("Raise Wake: %s\n", cache.raiseToWake ? "ON" : "OFF");
         Serial.println("========================");
 #endif
     }

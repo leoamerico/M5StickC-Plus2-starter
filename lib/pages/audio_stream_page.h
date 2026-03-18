@@ -174,7 +174,7 @@ private:
                 M5.Display.setCursor(6, 56);
                 M5.Display.print("Check WiFi credentials");
                 M5.Display.setCursor(4, SCREEN_H - 10);
-                M5.Display.print("A:retry  B:back");
+                M5.Display.print("A:WiFi Setup  B:back");
                 break;
             }
         }
@@ -245,10 +245,13 @@ public:
 
     const char* getName() override { return "Audio Stream"; }
 
-    // A button: start / retry
+    // A button: start / fix credentials
     void onButtonAPressed() override {
         settings->resetInactivityTimer();
-        if (state == ST_IDLE || state == ST_ERROR) {
+        if (state == ST_ERROR) {
+            doStop();
+            pageManager->goToPage(2); // WiFi Setup to fix credentials
+        } else if (state == ST_IDLE) {
             if (hasCredentials()) {
                 doConnect();
             } else {

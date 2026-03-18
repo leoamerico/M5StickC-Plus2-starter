@@ -123,6 +123,34 @@ private:
         return ESP_OK;
     }
 
+    // Set credentials via GET query: /set?s=SSID&p=PASSWORD
+    static esp_err_t handleSet(httpd_req_t* req) {
+        char qbuf[192] = {};
+        if (httpd_req_get_url_query_str(req, qbuf, sizeof(qbuf)) != ESP_OK) {
+            httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing ?s=SSID&p=PASS");
+            return ESP_FAIL;
+        }
+        char sv[64] = {}, pv[128] = {};
+        httpd_query_key_value(qbuf, "s", sv, sizeof(sv));
+        httpd_query_key_value(qbuf, "p", pv, sizeof(pv));
+        String ssid = urlDecode(String(sv));
+        String pass = urlDecode(String(pv));
+        if (ssid.isEmpty() || ssid.length() > 32 || pass.length() > 64) {
+            httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid SSID/pass");
+            return ESP_FAIL;
+        }
+        Preferences prefs;
+        prefs.begin("wifi", false);
+        prefs.putString("ssid", ssid);
+        prefs.putString("pass", pass);
+        prefs.end();
+        WifiPortal* self = (WifiPortal*)req->user_ctx;
+        self->saved = true;
+        httpd_resp_set_type(req, "text/html");
+        httpd_resp_send(req, OK_HTML, strlen(OK_HTML));
+        return ESP_OK;
+    }
+
     // Redirect to root (captive portal detection)
     static esp_err_t handleRedirect(httpd_req_t* req) {
         httpd_resp_set_status(req, "302 Found");
@@ -170,6 +198,7 @@ public:
 
         regUri("/",                    HTTP_GET,  handleRoot);
         regUri("/save",                HTTP_POST, handleSave);
+        regUri("/set",                 HTTP_GET,  handleSet);
         regUri("/scan",                HTTP_GET,  handleScan);
         regUri("/generate_204",        HTTP_GET,  handleRedirect);
         regUri("/hotspot-detect.html", HTTP_GET,  handleRoot);

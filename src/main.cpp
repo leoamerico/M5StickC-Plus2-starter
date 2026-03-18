@@ -68,7 +68,7 @@ void handleSerialCommands() {
 
 void setup() {
   auto cfg = M5.config();
-  cfg.internal_imu = false;  // not used — saves ~4 KB Flash
+  cfg.internal_imu = true;   // MPU6886 — used for raise-to-wake
   cfg.internal_spk = false;  // released in startI2S() anyway
   M5.begin(cfg);
   M5.Display.setRotation(3);
@@ -107,7 +107,46 @@ void loop() {
   batteryHandler.update();
   handleSerialCommands();
   if (settings->shouldGoToSleep()) {
+    // Raise-to-wake: display off, IMU polling, then deep sleep
+    if (settings->getRaiseToWake()) {
+      M5.Display.setBrightness(0);
+      M5.Display.sleep();
+      unsigned long dimStart = millis();
+      const unsigned long DEEP_SLEEP_AFTER = 30000UL; // 30s in display-sleep
+      float prevAcc = 0;
+      bool first = true;
+      while (millis() - dimStart < DEEP_SLEEP_AFTER) {
+        M5.update();
+        // Any button press → wake immediately
+        if (M5.BtnA.wasPressed() || M5.BtnB.wasPressed() || M5.BtnPWR.wasPressed()) {
+          M5.Display.wakeup();
+          M5.Display.setBrightness(128);
+          settings->resetInactivityTimer();
+          pageManager.begin(); // redraw current page
+          goto loopEnd;
+        }
+        // Read accelerometer
+        float ax, ay, az;
+        if (M5.Imu.getAccelData(&ax, &ay, &az)) {
+          float mag = sqrtf(ax * ax + ay * ay + az * az);
+          if (first) { prevAcc = mag; first = false; }
+          else {
+            float delta = fabsf(mag - prevAcc);
+            if (delta > 0.4f) { // significant motion/tilt
+              M5.Display.wakeup();
+              M5.Display.setBrightness(128);
+              settings->resetInactivityTimer();
+              pageManager.begin();
+              goto loopEnd;
+            }
+            prevAcc = prevAcc * 0.8f + mag * 0.2f; // low-pass filter
+          }
+        }
+        delay(50); // 20 Hz polling — low power
+      }
+    }
     batteryHandler.M5deepSleep();
   }
+  loopEnd:
   delay(10);
 }

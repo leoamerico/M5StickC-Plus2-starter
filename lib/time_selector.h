@@ -34,6 +34,7 @@ struct TimeFieldConfig {
     uint8_t minValue;
     uint8_t maxValue;
     uint8_t defaultValue;
+    uint8_t step;  // increment step (default 1)
 };
 
 class TimeSelector {
@@ -81,9 +82,20 @@ public:
         
         fieldCount = 1;
         fields = new TimeFieldConfig[1];
-        fields[0] = {FIELD_SECONDS, "Seconds", minSec, maxSec, defaultSec};
+        fields[0] = {FIELD_SECONDS, "Seconds", minSec, maxSec, defaultSec, 1};
         
         currentValue.seconds = defaultSec;
+        currentFieldIndex = 0;
+    }
+    
+    void configureMinutesStep(uint8_t defaultMin = 5, uint8_t minMin = 5, uint8_t maxMin = 120, uint8_t step = 5) {
+        if (fields) delete[] fields;
+        
+        fieldCount = 1;
+        fields = new TimeFieldConfig[1];
+        fields[0] = {FIELD_MINUTES, "Minutes", minMin, maxMin, defaultMin, step};
+        
+        currentValue.minutes = defaultMin;
         currentFieldIndex = 0;
     }
     
@@ -92,8 +104,8 @@ public:
         
         fieldCount = 2;
         fields = new TimeFieldConfig[2];
-        fields[0] = {FIELD_HOURS, "Hours", 0, 23, defaultHour};
-        fields[1] = {FIELD_MINUTES, "Minutes", 0, 59, defaultMin};
+        fields[0] = {FIELD_HOURS, "Hours", 0, 23, defaultHour, 1};
+        fields[1] = {FIELD_MINUTES, "Minutes", 0, 59, defaultMin, 1};
         
         currentValue.hours = defaultHour;
         currentValue.minutes = defaultMin;
@@ -105,9 +117,9 @@ public:
         
         fieldCount = 3;
         fields = new TimeFieldConfig[3];
-        fields[0] = {FIELD_HOURS, "Hours", 0, 23, h};
-        fields[1] = {FIELD_MINUTES, "Minutes", 0, 59, m};
-        fields[2] = {FIELD_SECONDS, "Seconds", 0, 59, s};
+        fields[0] = {FIELD_HOURS, "Hours", 0, 23, h, 1};
+        fields[1] = {FIELD_MINUTES, "Minutes", 0, 59, m, 1};
+        fields[2] = {FIELD_SECONDS, "Seconds", 0, 59, s, 1};
         
         currentValue.hours = h;
         currentValue.minutes = m;
@@ -120,9 +132,9 @@ public:
 
         fieldCount = 3;
         fields = new TimeFieldConfig[3];
-        fields[0] = {FIELD_DAY,   "Day",   1, 31, d};
-        fields[1] = {FIELD_MONTH, "Month", 1, 12, mo};
-        fields[2] = {FIELD_YEAR,  "Year",  0, 99, yOff};
+        fields[0] = {FIELD_DAY,   "Day",   1, 31, d, 1};
+        fields[1] = {FIELD_MONTH, "Month", 1, 12, mo, 1};
+        fields[2] = {FIELD_YEAR,  "Year",  0, 99, yOff, 1};
 
         currentValue.day        = d;
         currentValue.month      = mo;
@@ -138,12 +150,12 @@ public:
         active = true;
         currentFieldIndex = 0;
         
-        // Creates a "virtual menu" with all possible values
         TimeFieldConfig& field = fields[currentFieldIndex];
         uint8_t* currentVal = getValuePointer(field.field);
+        uint8_t s = field.step > 0 ? field.step : 1;
         
-        virtualMenuSize = field.maxValue - field.minValue + 1;
-        virtualCurrentIndex = *currentVal - field.minValue;
+        virtualMenuSize = (field.maxValue - field.minValue) / s + 1;
+        virtualCurrentIndex = (*currentVal - field.minValue) / s;
         
         draw();
     }
@@ -167,7 +179,8 @@ public:
             virtualCurrentIndex = virtualMenuSize - 1;
         }
         
-        *currentVal = field.minValue + virtualCurrentIndex;
+        uint8_t s = field.step > 0 ? field.step : 1;
+        *currentVal = field.minValue + virtualCurrentIndex * s;
         
         if (settings->getUiSound()) {
             M5.Speaker.tone(2800, 30);
@@ -187,7 +200,8 @@ public:
             virtualCurrentIndex = 0;
         }
         
-        *currentVal = field.minValue + virtualCurrentIndex;
+        uint8_t s = field.step > 0 ? field.step : 1;
+        *currentVal = field.minValue + virtualCurrentIndex * s;
         
         if (settings->getUiSound()) {
             M5.Speaker.tone(2400, 30);
@@ -215,9 +229,10 @@ public:
             // Go to next step
             TimeFieldConfig& field = fields[currentFieldIndex];
             uint8_t* currentVal = getValuePointer(field.field);
+            uint8_t s = field.step > 0 ? field.step : 1;
             
-            virtualMenuSize = field.maxValue - field.minValue + 1;
-            virtualCurrentIndex = *currentVal - field.minValue;
+            virtualMenuSize = (field.maxValue - field.minValue) / s + 1;
+            virtualCurrentIndex = (*currentVal - field.minValue) / s;
             
             draw();
         }
@@ -241,7 +256,8 @@ public:
         M5.Display.setCursor(M5.Display.width() - 30, 10);
         M5.Display.print(progress);
         
-        uint8_t prevVal = (*currentVal == field.minValue) ? field.maxValue : (*currentVal - 1);
+        uint8_t s = field.step > 0 ? field.step : 1;
+        uint8_t prevVal = (*currentVal <= field.minValue) ? field.maxValue : (*currentVal - s);
         char prevStr[8];
         formatFieldValue(prevStr, field.field, prevVal);
         display->drawCenteredText(prevStr, VALUE_Y - 20, TFT_DARKGREY, 2);
@@ -250,7 +266,7 @@ public:
         formatFieldValue(valueStr, field.field, *currentVal);
         display->drawCenteredText(valueStr, VALUE_Y + 10, TFT_YELLOW, field.field == FIELD_YEAR ? 3 : 4);
 
-        uint8_t nextVal = (*currentVal == field.maxValue) ? field.minValue : (*currentVal + 1);
+        uint8_t nextVal = (*currentVal >= field.maxValue) ? field.minValue : (*currentVal + s);
         char nextStr[8];
         formatFieldValue(nextStr, field.field, nextVal);
         display->drawCenteredText(nextStr, VALUE_Y + 50, TFT_DARKGREY, 2);

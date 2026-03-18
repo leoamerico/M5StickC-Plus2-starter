@@ -8,6 +8,7 @@
 #include "../time_selector.h"
 #include "../rtc_utils.h"
 #include "../device_info_handler.h"
+#include "../alarm_handler.h"
 #include "../page_manager.h"
 #include <stdint.h>
 
@@ -23,11 +24,16 @@ private:
     MenuHandler* settingsMenu;
     TimeSelector* timeSelector;
     DeviceInfoViewer* deviceInfo;
+    AlarmHandler* alarmHandler;
+    char alarmLabel[32];
+    char timerLabel[32];
+    bool timerRinging;
     
     char soundLabel[32];
     char timeFormatLabel[32];
     char autoSleepLabel[32];
     char sleepDelayLabel[48];
+    char raiseWakeLabel[32];
 
     void updateMenuLabels() {
         sprintf(soundLabel, "UI Sound: %s", 
@@ -41,12 +47,44 @@ private:
         
         sprintf(sleepDelayLabel, "Sleep Delay: %ds",
                 settings->getAutoSleepDelay());
+        
+        sprintf(raiseWakeLabel, "Raise Wake: %s",
+                settings->getRaiseToWake() ? "ON" : "OFF");
+    }
+
+    void updateAlarmLabel() {
+        if (alarmHandler->isEnabled()) {
+            char t[8];
+            alarmHandler->getTimeStr(t, sizeof(t));
+            sprintf(alarmLabel, "Alarm: %s", t);
+        } else {
+            strcpy(alarmLabel, "Alarm: OFF");
+        }
+    }
+
+    void updateTimerLabel() {
+        uint32_t target = clockHandler->readTarget();
+        if (target) {
+            uint32_t nowE = rtcEpochNow();
+            if (nowE < target) {
+                uint32_t remain = target - nowE;
+                sprintf(timerLabel, "Timer: %02u:%02u", remain / 60, remain % 60);
+            } else {
+                strcpy(timerLabel, "Set Timer");
+            }
+        } else {
+            strcpy(timerLabel, "Set Timer");
+        }
     }
 
     void rebuildMainMenu() {
         mainMenu->clear();
+        updateAlarmLabel();
+        updateTimerLabel();
         
-        mainMenu->addItem("Set Timer",      [this]() { onSetTimer(); });
+        mainMenu->addItem(timerLabel,        [this]() { onSetTimer(); });
+        mainMenu->addItem("Set Alarm",      [this]() { onSetAlarm(); });
+        mainMenu->addItem(alarmLabel,        [this]() { onToggleAlarm(); });
         mainMenu->addItem("Audio Stream",   [this]() { onAudioStream(); });
         mainMenu->addItem("Device Info",    [this]() { onDeviceInfo(); });
         mainMenu->addItem("Settings",       [this]() { onSettings(); });
@@ -66,14 +104,79 @@ private:
         settingsMenu->addItem(timeFormatLabel, [this]() { onToggleTimeFormat(); });
         settingsMenu->addItem(autoSleepLabel, [this]() { onToggleAutoSleep(); });
         settingsMenu->addItem(sleepDelayLabel, [this]() { onConfigureSleepDelay(); });
+        settingsMenu->addItem(raiseWakeLabel, [this]() { onToggleRaiseWake(); });
         settingsMenu->addItem("Set Time", [this]() { onSetTime(); });
         settingsMenu->addItem("Set Date", [this]() { onSetDate(); });
         settingsMenu->addItem("< Back", [this]() { closeMenu(); });
     }
     
     void onSetTimer() {
-        display->showFullScreenMessage("Timer", "Coming soon", MSG_INFO, 1000);
-        if (mainMenu) mainMenu->draw();
+        // If timer is already running, cancel it
+        if (clockHandler->readTarget()) {
+            clockHandler->clearTarget();
+            display->showFullScreenMessage("Timer", "Cancelled", MSG_ERROR, 800);
+            rebuildMainMenu();
+            mainMenu->draw();
+            return;
+        }
+        
+        menuManager->closeAll();
+        
+        // 5-minute steps: 5, 10, 15, ..., 120
+        timeSelector->configureMinutesStep(5, 5, 120, 5);
+        
+        timeSelector->setOnComplete([this](TimeValue result) {
+            uint32_t minutes = result.minutes;
+            uint32_t nowE = rtcEpochNow();
+            uint32_t target = nowE + minutes * 60;
+            clockHandler->writeTarget(target);
+            
+            char msg[32];
+            sprintf(msg, "%d min", minutes);
+            display->showFullScreenMessage("Timer Set", msg, MSG_SUCCESS, 1000);
+            
+            rebuildMainMenu();
+            menuManager->pushMenu(mainMenu);
+        });
+        
+        timeSelector->start();
+    }
+    
+    void onSetAlarm() {
+        menuManager->closeAll();
+        
+        uint8_t curH = alarmHandler->getHour();
+        uint8_t curM = alarmHandler->getMinute();
+        timeSelector->configureHoursMinutes(curH, curM);
+        
+        timeSelector->setOnComplete([this](TimeValue result) {
+            alarmHandler->setTime(result.hours, result.minutes);
+            
+            char msg[16];
+            sprintf(msg, "%02d:%02d", result.hours, result.minutes);
+            display->showFullScreenMessage("Alarm Set", msg, MSG_SUCCESS, 1000);
+            
+            rebuildMainMenu();
+            menuManager->pushMenu(mainMenu);
+        });
+        
+        timeSelector->start();
+    }
+    
+    void onToggleAlarm() {
+        bool current = alarmHandler->isEnabled();
+        alarmHandler->setEnabled(!current);
+        
+        if (!current) {
+            char msg[16];
+            alarmHandler->getTimeStr(msg, sizeof(msg));
+            display->showFullScreenMessage("Alarm", msg, MSG_SUCCESS, 800);
+        } else {
+            display->showFullScreenMessage("Alarm", "OFF", MSG_ERROR, 800);
+        }
+        
+        rebuildMainMenu();
+        mainMenu->draw();
     }
     
     void onSettings() {
@@ -137,6 +240,21 @@ private:
         
         display->showFullScreenMessage(
             "Auto Sleep", 
+            current ? "OFF" : "ON", 
+            current ? MSG_ERROR : MSG_SUCCESS, 
+            800
+        );
+        
+        rebuildSettingsMenu();
+        settingsMenu->draw();
+    }
+    
+    void onToggleRaiseWake() {
+        bool current = settings->getRaiseToWake();
+        settings->setRaiseToWake(!current);
+        
+        display->showFullScreenMessage(
+            "Raise Wake", 
             current ? "OFF" : "ON", 
             current ? MSG_ERROR : MSG_SUCCESS, 
             800
@@ -219,7 +337,54 @@ private:
     }
     
     // Callback overrides to handle TimeSelector
+    void ringAlarm() {
+        M5.Speaker.begin();
+        M5.Speaker.setVolume(200);
+        bool ringing = true;
+        
+        while (ringing) {
+            display->clearScreen();
+            display->displayMainTitle("ALARM!", MSG_ERROR);
+            
+            // Show alarm time or "Timer" depending on source
+            if (timerRinging) {
+                display->displaySubtitle("Timer", MSG_WARNING);
+            } else {
+                char t[8];
+                alarmHandler->getTimeStr(t, sizeof(t));
+                display->displaySubtitle(t, MSG_WARNING);
+            }
+            display->displayStatus("Press to dismiss", MSG_INFO);
+            
+            for (int i = 0; i < 4 && ringing; i++) {
+                M5.Speaker.tone(2500, 150);
+                delay(200);
+                M5.Speaker.tone(3200, 150);
+                delay(200);
+                M5.update();
+                if (M5.BtnA.wasPressed() || M5.BtnB.wasPressed() || M5.BtnPWR.wasPressed()) {
+                    ringing = false;
+                    break;
+                }
+            }
+            if (!ringing) break;
+            delay(600);
+            M5.update();
+            if (M5.BtnA.wasPressed() || M5.BtnB.wasPressed() || M5.BtnPWR.wasPressed()) {
+                ringing = false;
+            }
+        }
+        
+        if (timerRinging) timerRinging = false;
+        if (alarmHandler->isRinging()) alarmHandler->dismiss();
+        
+        M5.Speaker.end();
+        settings->resetInactivityTimer();
+        display->clearScreen();
+    }
+
     void onButtonPWRPressed() override {
+        if (alarmHandler->isRinging() || timerRinging) { alarmHandler->dismiss(); timerRinging = false; return; }
         if (timeSelector->isActive()) {
             timeSelector->navigateUp();
         } else if (deviceInfo->isActive()) {
@@ -230,6 +395,7 @@ private:
     }
     
     void onButtonAPressed() override {
+        if (alarmHandler->isRinging() || timerRinging) { alarmHandler->dismiss(); timerRinging = false; return; }
         if (timeSelector->isActive()) {
             timeSelector->select();
         } else if (deviceInfo->isActive()) {
@@ -242,6 +408,7 @@ private:
     }
     
     void onButtonBShortPress() override {
+        if (alarmHandler->isRinging() || timerRinging) { alarmHandler->dismiss(); timerRinging = false; return; }
         if (timeSelector->isActive()) {
             timeSelector->navigateDown();
         } else if (deviceInfo->isActive()) {
@@ -266,6 +433,8 @@ public:
         
         timeSelector = new TimeSelector(display, "Set Time");
         deviceInfo   = new DeviceInfoViewer(display);
+        alarmHandler = new AlarmHandler();
+        timerRinging = false;
         
         updateMenuLabels();
         rebuildMainMenu();
@@ -280,6 +449,9 @@ public:
         }
         if (deviceInfo) {
             delete deviceInfo;
+        }
+        if (alarmHandler) {
+            delete alarmHandler;
         }
     }
     
@@ -304,6 +476,13 @@ public:
         
         unsigned long now = millis();
         if (now - lastClockUpdate >= clockRefreshInterval) {
+            // Check alarm
+            uint8_t curH = rtcGetHours();
+            uint8_t curM = rtcGetMinutes();
+            if (alarmHandler->check(curH, curM)) {
+                ringAlarm();
+            }
+            
             uint32_t target = clockHandler->readTarget();
             uint32_t remain = 0;
             
@@ -312,11 +491,24 @@ public:
                 if (nowE < target) {
                     remain = target - nowE;
                 } else {
+                    // Timer expired — ring!
                     clockHandler->clearTarget();
+                    timerRinging = true;
+                    ringAlarm();
                 }
             }
             
-            clockHandler->drawClock(remain);
+            // Build alarm indicator string
+            const char* alarmStr = nullptr;
+            char alarmBuf[16];
+            if (alarmHandler->isEnabled()) {
+                char t[8];
+                alarmHandler->getTimeStr(t, sizeof(t));
+                snprintf(alarmBuf, sizeof(alarmBuf), "Alarm %s", t);
+                alarmStr = alarmBuf;
+            }
+            
+            clockHandler->drawClock(remain, alarmStr);
             batteryHandler->displayInfo();
             lastClockUpdate = now;
         }
