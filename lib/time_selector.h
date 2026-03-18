@@ -11,15 +11,21 @@ struct TimeValue {
     uint8_t hours;
     uint8_t minutes;
     uint8_t seconds;
+    uint8_t day;
+    uint8_t month;
+    uint8_t yearOffset; // offset from 2000 (e.g. 26 = 2026)
     
-    TimeValue() : hours(0), minutes(0), seconds(0) {}
-    TimeValue(uint8_t h, uint8_t m, uint8_t s) : hours(h), minutes(m), seconds(s) {}
+    TimeValue() : hours(0), minutes(0), seconds(0), day(1), month(1), yearOffset(26) {}
+    TimeValue(uint8_t h, uint8_t m, uint8_t s) : hours(h), minutes(m), seconds(s), day(1), month(1), yearOffset(26) {}
 };
 
 enum TimeField {
     FIELD_HOURS,
     FIELD_MINUTES,
-    FIELD_SECONDS
+    FIELD_SECONDS,
+    FIELD_DAY,
+    FIELD_MONTH,
+    FIELD_YEAR
 };
 
 struct TimeFieldConfig {
@@ -106,6 +112,21 @@ public:
         currentValue.hours = h;
         currentValue.minutes = m;
         currentValue.seconds = s;
+        currentFieldIndex = 0;
+    }
+
+    void configureDayMonthYear(uint8_t d = 1, uint8_t mo = 1, uint8_t yOff = 26) {
+        if (fields) delete[] fields;
+
+        fieldCount = 3;
+        fields = new TimeFieldConfig[3];
+        fields[0] = {FIELD_DAY,   "Day",   1, 31, d};
+        fields[1] = {FIELD_MONTH, "Month", 1, 12, mo};
+        fields[2] = {FIELD_YEAR,  "Year",  0, 99, yOff};
+
+        currentValue.day        = d;
+        currentValue.month      = mo;
+        currentValue.yearOffset = yOff;
         currentFieldIndex = 0;
     }
     
@@ -222,16 +243,16 @@ public:
         
         uint8_t prevVal = (*currentVal == field.minValue) ? field.maxValue : (*currentVal - 1);
         char prevStr[8];
-        sprintf(prevStr, "%02d", prevVal);
+        formatFieldValue(prevStr, field.field, prevVal);
         display->drawCenteredText(prevStr, VALUE_Y - 20, TFT_DARKGREY, 2);
-        
+
         char valueStr[8];
-        sprintf(valueStr, "%02d", *currentVal);
-        display->drawCenteredText(valueStr, VALUE_Y + 10, TFT_YELLOW, 4);
-        
+        formatFieldValue(valueStr, field.field, *currentVal);
+        display->drawCenteredText(valueStr, VALUE_Y + 10, TFT_YELLOW, field.field == FIELD_YEAR ? 3 : 4);
+
         uint8_t nextVal = (*currentVal == field.maxValue) ? field.minValue : (*currentVal + 1);
         char nextStr[8];
-        sprintf(nextStr, "%02d", nextVal);
+        formatFieldValue(nextStr, field.field, nextVal);
         display->drawCenteredText(nextStr, VALUE_Y + 50, TFT_DARKGREY, 2);
         
         display->drawCenteredText(field.label, LABEL_Y, TFT_CYAN, 1);
@@ -246,14 +267,21 @@ public:
 private:
     uint8_t* getValuePointer(TimeField field) {
         switch(field) {
-            case FIELD_HOURS:
-                return &currentValue.hours;
-            case FIELD_MINUTES:
-                return &currentValue.minutes;
-            case FIELD_SECONDS:
-                return &currentValue.seconds;
-            default:
-                return &currentValue.seconds;
+            case FIELD_HOURS:   return &currentValue.hours;
+            case FIELD_MINUTES: return &currentValue.minutes;
+            case FIELD_SECONDS: return &currentValue.seconds;
+            case FIELD_DAY:     return &currentValue.day;
+            case FIELD_MONTH:   return &currentValue.month;
+            case FIELD_YEAR:    return &currentValue.yearOffset;
+            default:            return &currentValue.seconds;
+        }
+    }
+
+    void formatFieldValue(char* buf, TimeField field, uint8_t val) {
+        if (field == FIELD_YEAR) {
+            sprintf(buf, "%04d", 2000 + val);
+        } else {
+            sprintf(buf, "%02d", val);
         }
     }
 };

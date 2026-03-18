@@ -1,0 +1,16 @@
+{
+  "name": "m5cam-e2e",
+  "description": "Playwright E2E — interface M5 Cam (extraída do firmware)",
+  "private": true,
+  "scripts": {
+    "test":          "playwright test --headed",
+    "test:headless": "playwright test",
+    "test:ui":       "playwright test --ui",
+    "test:debug":    "playwright test --headed --debug",
+    "show-report":   "playwright show-report",
+    "server":        "node server.js"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.44.0"
+  }
+}

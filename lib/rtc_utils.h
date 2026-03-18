@@ -39,6 +39,33 @@ uint8_t rtcGetSeconds() {
   return dt.time.seconds;
 }
 
+uint8_t rtcGetDay() {
+  m5::rtc_datetime_t dt;
+  M5.Rtc.getDateTime(&dt);
+  return dt.date.date;
+}
+
+uint8_t rtcGetMonth() {
+  m5::rtc_datetime_t dt;
+  M5.Rtc.getDateTime(&dt);
+  return dt.date.month;
+}
+
+uint16_t rtcGetYear() {
+  m5::rtc_datetime_t dt;
+  M5.Rtc.getDateTime(&dt);
+  return dt.date.year;
+}
+
+void rtcSetDate(uint8_t day, uint8_t month, uint16_t year) {
+  m5::rtc_date_t date;
+  date.date  = day;
+  date.month = month;
+  date.year  = year;
+  date.weekDay = 0;
+  M5.Rtc.setDate(&date);
+}
+
 void rtcSetTime(uint8_t hours, uint8_t minutes, uint8_t seconds) {
   m5::rtc_time_t time;
   time.hours = hours;

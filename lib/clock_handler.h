@@ -30,17 +30,17 @@ public:
         M5.Rtc.getDateTime(&dt);
     }
     
-    // Get current time as string (format: HH:MM:SS)
+    // Get current time as string (format: HH:MM)
     const char* getCurrentFullTime() {
         updateDateTime();
-        sprintf(timeBuffer, "%02d:%02d:%02d", dt.time.hours, dt.time.minutes, dt.time.seconds);
+        sprintf(timeBuffer, "%02d:%02d", dt.time.hours, dt.time.minutes);
         return timeBuffer;
     }
     
-    // Get current date in French format (format: DD-MM-YYYY)
+    // Get current date in BR format (format: DD/MM/YYYY)
     const char* getCurrentFullDateFR() {
         updateDateTime();
-        sprintf(dateBuffer, "%02d-%02d-%04d", dt.date.date, dt.date.month, dt.date.year);
+        sprintf(dateBuffer, "%02d/%02d/%04d", dt.date.date, dt.date.month, dt.date.year);
         return dateBuffer;
     }
     
@@ -60,11 +60,11 @@ public:
 
     void drawClock(uint32_t remainSec = 0) {
         static uint32_t lastRemain = 9999;
-        static uint8_t lastSec = 99;
+        static uint8_t lastMin = 99;
         
         updateDateTime();
         
-        if (dt.time.seconds != lastSec || remainSec != lastRemain) {
+        if (dt.time.minutes != lastMin || remainSec != lastRemain) {
             display->clearScreen();
             
             // Display time using DisplayHandler
@@ -80,7 +80,7 @@ public:
                 display->displayInfoMessage(pomoText);
             }
             
-            lastSec = dt.time.seconds;
+            lastMin = dt.time.minutes;
             lastRemain = remainSec;
         }
     }

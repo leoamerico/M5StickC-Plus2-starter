@@ -73,7 +73,8 @@ public:
     }
 
     esp_sleep_enable_ext1_wakeup(WAKEUP_BUTTON_MASK, ESP_EXT1_WAKEUP_ALL_LOW);
-    
+
+    delay(100); // Let GPIO states settle before entering deep sleep
     esp_deep_sleep_start();
   }
 

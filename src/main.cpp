@@ -9,6 +9,7 @@
 #include "../lib/clock_handler.h"
 #include "../lib/page_manager.h"
 #include "../lib/pages/clock_page.h"
+#include "../lib/pages/audio_stream_page.h"
 
 DisplayHandler displayHandler;
 ClockHandler clockHandler(&displayHandler);
@@ -17,6 +18,7 @@ BatteryHandler batteryHandler(&displayHandler);
 PageManager pageManager;
 SettingsManager* settings;
 ClockPage* clockPage = nullptr;
+AudioStreamPage* audioStreamPage = nullptr;
 
 void beepAlarm() {
   M5.Speaker.begin();
@@ -26,6 +28,28 @@ void beepAlarm() {
     delay(250);
   }
   M5.Speaker.end();
+}
+
+// Configure WiFi credentials via Serial monitor.
+// Send:  WIFI:MySSID:MyPassword
+// Response: OK or ERR
+void handleSerialCommands() {
+  if (!Serial.available()) return;
+  String line = Serial.readStringUntil('\n');
+  line.trim();
+  if (line.startsWith("WIFI:")) {
+    int sep = line.indexOf(':', 5);
+    if (sep < 0) { Serial.println("ERR: format WIFI:ssid:pass"); return; }
+    String newSsid = line.substring(5, sep);
+    String newPass = line.substring(sep + 1);
+    if (newSsid.isEmpty()) { Serial.println("ERR: empty SSID"); return; }
+    Preferences prefs;
+    prefs.begin("wifi", false);
+    prefs.putString("ssid", newSsid);
+    prefs.putString("pass", newPass);
+    prefs.end();
+    Serial.printf("OK: SSID='%s' saved\n", newSsid.c_str());
+  }
 }
 
 void setup() {
@@ -38,8 +62,11 @@ void setup() {
   settings->begin();
   batteryHandler.begin();
 
-  clockPage = new ClockPage(&displayHandler, &clockHandler, &batteryHandler);
+  clockPage = new ClockPage(&displayHandler, &clockHandler, &batteryHandler, &pageManager);
   pageManager.addPage(clockPage);
+
+  audioStreamPage = new AudioStreamPage(&displayHandler, &pageManager);
+  pageManager.addPage(audioStreamPage);
 
   // @todo add a tag system using pref maybe to allow for different actions based of tags
   if (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_TIMER) {
@@ -59,6 +86,7 @@ void loop() {
   
   // Update global handlers
   batteryHandler.update();
+  handleSerialCommands();
   if (settings->shouldGoToSleep()) {
     batteryHandler.M5deepSleep();
   }

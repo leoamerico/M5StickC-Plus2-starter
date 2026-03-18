@@ -7,17 +7,22 @@
 #include "../settings_manager.h"
 #include "../time_selector.h"
 #include "../rtc_utils.h"
+#include "../device_info_handler.h"
+#include "../page_manager.h"
+#include <stdint.h>
 
 class ClockPage : public PageBase {
 private:
     ClockHandler* clockHandler;
     BatteryHandler* batteryHandler;
+    PageManager* pageManager;
     
     unsigned long lastClockUpdate;
     uint32_t clockRefreshInterval;
     
     MenuHandler* settingsMenu;
     TimeSelector* timeSelector;
+    DeviceInfoViewer* deviceInfo;
     
     char soundLabel[32];
     char timeFormatLabel[32];
@@ -42,8 +47,11 @@ private:
         mainMenu->clear();
         
         mainMenu->addItem("Start Pomodoro", [this]() { onStartPomodoro(); });
-        mainMenu->addItem("Set Timer", [this]() { onSetTimer(); });
-        mainMenu->addItem("Settings", [this]() { onSettings(); });
+        mainMenu->addItem("Set Timer",      [this]() { onSetTimer(); });
+        mainMenu->addItem("Audio Stream",   [this]() { onAudioStream(); });
+        mainMenu->addItem("Device Info",    [this]() { onDeviceInfo(); });
+        mainMenu->addItem("Settings",       [this]() { onSettings(); });
+        mainMenu->addItem("Restart",        [this]() { onRestart(); });
     }
     
     void rebuildSettingsMenu() {
@@ -60,6 +68,8 @@ private:
         settingsMenu->addItem(autoSleepLabel, [this]() { onToggleAutoSleep(); });
         settingsMenu->addItem(sleepDelayLabel, [this]() { onConfigureSleepDelay(); });
         settingsMenu->addItem("Set Time", [this]() { onSetTime(); });
+        settingsMenu->addItem("Set Date", [this]() { onSetDate(); });
+        settingsMenu->addItem("< Back", [this]() { closeMenu(); });
     }
     
     void onStartPomodoro() {
@@ -74,6 +84,26 @@ private:
     void onSettings() {
         rebuildSettingsMenu();
         menuManager->pushMenu(settingsMenu);
+    }
+
+    void onAudioStream() {
+        menuManager->closeAll();
+        pageManager->goToPage(1); // AudioStreamPage is always index 1
+    }
+
+    void onRestart() {
+        menuManager->closeAll();
+        display->showFullScreenMessage("Restart", "Restarting...", MSG_INFO, 1200);
+        ESP.restart();
+    }
+
+    void onDeviceInfo() {
+        menuManager->closeAll();
+        deviceInfo->setOnExit([this]() {
+            display->clearScreen();
+            clockHandler->drawClock(0);
+        });
+        deviceInfo->start();
     }
     
     void onToggleSound() {
@@ -135,6 +165,7 @@ private:
             display->showFullScreenMessage("Sleep Delay", msg, MSG_SUCCESS, 1000);
             
             rebuildSettingsMenu();
+            menuManager->pushMenu(mainMenu);
             menuManager->pushMenu(settingsMenu);
         });
         
@@ -150,7 +181,7 @@ private:
         timeSelector->configureHoursMinutes(currentHour, currentMinute);
         
         timeSelector->setOnComplete([this](TimeValue result) {
-            // Udpate RTC with new time, keep seconds to 0 just to simplify
+            // Update RTC with new time, keep seconds to 0 just to simplify
             rtcSetTime(result.hours, result.minutes, 0);
             
             char msg[32];
@@ -158,9 +189,37 @@ private:
             display->showFullScreenMessage("Time Set", msg, MSG_SUCCESS, 1000);
             
             rebuildSettingsMenu();
+            menuManager->pushMenu(mainMenu);
             menuManager->pushMenu(settingsMenu);
         });
         
+        timeSelector->start();
+    }
+
+    void onSetDate() {
+        menuManager->closeAll();
+
+        uint8_t currentDay   = rtcGetDay();
+        uint8_t currentMonth = rtcGetMonth();
+        uint16_t currentYear = rtcGetYear();
+        uint8_t yOff = (currentYear >= 2000 && currentYear <= 2099)
+                       ? (uint8_t)(currentYear - 2000) : 26;
+
+        timeSelector->configureDayMonthYear(currentDay, currentMonth, yOff);
+
+        timeSelector->setOnComplete([this](TimeValue result) {
+            uint16_t year = 2000 + result.yearOffset;
+            rtcSetDate(result.day, result.month, year);
+
+            char msg[32];
+            sprintf(msg, "%02d/%02d/%04d", result.day, result.month, year);
+            display->showFullScreenMessage("Date Set", msg, MSG_SUCCESS, 1000);
+
+            rebuildSettingsMenu();
+            menuManager->pushMenu(mainMenu);
+            menuManager->pushMenu(settingsMenu);
+        });
+
         timeSelector->start();
     }
     
@@ -168,6 +227,8 @@ private:
     void onButtonPWRPressed() override {
         if (timeSelector->isActive()) {
             timeSelector->navigateUp();
+        } else if (deviceInfo->isActive()) {
+            deviceInfo->prev();
         } else if (hasActiveMenu()) {
             navigateMenuUp();
         }
@@ -176,6 +237,8 @@ private:
     void onButtonAPressed() override {
         if (timeSelector->isActive()) {
             timeSelector->select();
+        } else if (deviceInfo->isActive()) {
+            deviceInfo->exit();
         } else if (hasActiveMenu()) {
             selectMenuItem();
         } else {
@@ -186,16 +249,19 @@ private:
     void onButtonBShortPress() override {
         if (timeSelector->isActive()) {
             timeSelector->navigateDown();
+        } else if (deviceInfo->isActive()) {
+            deviceInfo->next();
         } else if (hasActiveMenu()) {
             navigateMenuDown();
         }
     }
     
 public:
-    ClockPage(DisplayHandler* disp, ClockHandler* clock, BatteryHandler* battery)
+    ClockPage(DisplayHandler* disp, ClockHandler* clock, BatteryHandler* battery, PageManager* pm)
         : PageBase(disp, "Clock Menu"),
           clockHandler(clock),
           batteryHandler(battery),
+          pageManager(pm),
           settingsMenu(nullptr) {
         
         settings = SettingsManager::getInstance();
@@ -204,6 +270,7 @@ public:
         clockRefreshInterval = 1000;
         
         timeSelector = new TimeSelector(display, "Set Time");
+        deviceInfo   = new DeviceInfoViewer(display);
         
         updateMenuLabels();
         rebuildMainMenu();
@@ -216,6 +283,9 @@ public:
         if (timeSelector) {
             delete timeSelector;
         }
+        if (deviceInfo) {
+            delete deviceInfo;
+        }
     }
     
     void setup() override {
@@ -226,6 +296,10 @@ public:
     
     void loop() override {
         if (timeSelector->isActive()) {
+            return;
+        }
+
+        if (deviceInfo->isActive()) {
             return;
         }
         
