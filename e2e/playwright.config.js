@@ -39,6 +39,9 @@ module.exports = defineConfig({
     screenshot: 'only-on-failure',
     video:      'retain-on-failure',
 
+    // Permite capturar eventos de download (incluindo blob: URLs)
+    acceptDownloads: true,
+
     // Viewport de iPhone 14 Pro — a interface foi desenhada para mobile
     viewport: { width: 390, height: 844 },
   },
@@ -66,7 +69,7 @@ module.exports = defineConfig({
   webServer: {
     command:              'node server.js',
     url:                  'http://localhost:3333',
-    reuseExistingServer:  true,   // reutiliza se já estiver rodando
+    reuseExistingServer:  !process.env.CI,  // CI: reutiliza; local: reinicia (evita HTML em cache)
     timeout:              12_000,
   },
 });

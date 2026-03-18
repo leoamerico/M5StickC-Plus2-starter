@@ -332,8 +332,55 @@ test.describe('4 — Fluxo Câmera + Microfone', () => {
       const name = await dlRow.locator('.dlName').innerText();
       console.log(`  ✅  Arquivo gerado: ${name}`);
 
+      // Botões de ação devem estar presentes
+      await expect(dlRow.locator('.dlBtnSave')).toBeVisible();
+
       await page.screenshot({ path: path.join(SHOTS, '06-download-ready.png') });
     });
+  });
+
+  test('botão Save cria <a download> com nome correto (fallback sem showSaveFilePicker)', async ({ page }) => {
+    // Remove showSaveFilePicker para forçar o caminho do fallback
+    await page.addInitScript(() => {
+      // @ts-ignore
+      delete window.showSaveFilePicker;
+
+      // Espia document.createElement para capturar o <a download> criado por saveRec()
+      const origCreate = document.createElement.bind(document);
+      window.__savedAnchor = null;
+      document.createElement = (tag) => {
+        const el = origCreate(tag);
+        if (tag === 'a') {
+          // Sobrescreve click() para capturar sem disparar navegação real
+          const origClick = el.click.bind(el);
+          el.click = () => { window.__savedAnchor = { href: el.href, download: el.download }; };
+        }
+        return el;
+      };
+    });
+
+    await page.goto('/cam');
+    await page.locator('#startBtn').click();
+    await expect(page.locator('#recRow')).toBeVisible({ timeout: 10_000 });
+
+    // Grava 1 segundo
+    await page.locator('#recBtn').click();
+    await page.waitForTimeout(1000);
+    await page.locator('#recBtn').click();
+    await expect(page.locator('#dlSection')).toBeVisible({ timeout: 8000 });
+
+    // Clica no botão Save
+    await page.locator('.dlBtnSave').first().click();
+    await page.waitForTimeout(600); // aguarda o fetch(blob) terminar
+
+    // Verifica o anchor criado pelo fallback
+    const anchor = await page.evaluate(() => window.__savedAnchor || null);
+    expect(anchor).not.toBeNull();
+    expect(anchor.download).toMatch(/^m5_.*\.(mp4|webm)$/);
+    expect(anchor.href).toMatch(/^blob:/);
+
+    console.log(`  ✅  Fallback <a download> criado: ${anchor.download}`);
+    await page.screenshot({ path: path.join(SHOTS, '07-save-fallback.png') });
   });
 
 });

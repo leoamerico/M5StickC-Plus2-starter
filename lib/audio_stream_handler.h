@@ -231,6 +231,15 @@ body{
 .dlName{font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .dlSub{font-size:12px;color:var(--t2);margin-top:2px}
 .dlChevron{color:var(--t2);font-size:15px;font-weight:600;padding-left:4px}
+.dlActions{display:flex;gap:6px;flex-shrink:0}
+.dlBtn{
+  width:36px;height:36px;border-radius:10px;border:none;
+  display:flex;align-items:center;justify-content:center;
+  font-size:17px;cursor:pointer;transition:filter .12s,transform .1s;
+}
+.dlBtn:active{filter:brightness(.75);transform:scale(.91)}
+.dlBtnSave{background:var(--blue)}
+.dlBtnShare{background:rgba(255,255,255,.13)}
 #newBtn{
   width:100%;padding:14px;
   background:rgba(255,255,255,.1);color:#fff;border:none;
@@ -458,16 +467,57 @@ function toggleRec(){
 function renderDL(){
   var list=document.getElementById("dlList");
   list.innerHTML="";
-  recordings.forEach(function(r){
+  recordings.forEach(function(r,idx){
     var mm=("0"+Math.floor(r.dur/60)).slice(-2),ss=("0"+r.dur%60).slice(-2);
-    var a=document.createElement("a");
-    a.className="dlRow";a.href=r.url;a.download=r.name;
-    a.innerHTML="<div class=\"dlIcon\">&#127916;</div>"
-      +"<div class=\"dlMeta\"><div class=\"dlName\">"+r.name+"</div>"
-      +"<div class=\"dlSub\">"+mm+":"+ss+" &bull; "+r.sizeMB+" MB</div></div>"
-      +"<span class=\"dlChevron\">&#8595;</span>";
-    list.appendChild(a);
+    var row=document.createElement("div");
+    row.className="dlRow";
+    // Share button: visible only when Web Share API supports files (iOS Safari, Android Chrome)
+    var canShare=!!(navigator.canShare&&navigator.canShare({files:[new File([],"t.mp4",{type:"video/mp4"})]}));
+    row.innerHTML="<div class=\"dlIcon\">&#127916;</div>"
+      +"<div class=\"dlMeta\"><div class=\"dlName\">" +r.name+"</div>"
+      +"<div class=\"dlSub\">" +mm+":"+ss+" &bull; "+r.sizeMB+" MB</div></div>"
+      +"<div class=\"dlActions\">"
+      +(canShare?"<button class=\"dlBtn dlBtnShare\" title=\"Share\" onclick=\"shareRec("+idx+")\" aria-label=\"Share\">&#129310;</button>":"")
+      +"<button class=\"dlBtn dlBtnSave\" title=\"Save\" onclick=\"saveRec("+idx+")\" aria-label=\"Save to device\">&#8681;</button>"
+      +"</div>";
+    list.appendChild(row);
   });
+}
+async function saveRec(idx){
+  var r=recordings[idx];
+  var ext=r.name.split(".").pop();
+  var mime=ext==="mp4"?"video/mp4":"video/webm";
+  // showSaveFilePicker: Chrome/Edge desktop — abre picker nativo para escolher pasta
+  if(window.showSaveFilePicker){
+    try{
+      var fh=await window.showSaveFilePicker({
+        suggestedName:r.name,
+        types:[{description:"Video",accept:{[mime]:["." +ext]}}]
+      });
+      var blob=await fetch(r.url).then(function(res){return res.blob();});
+      var w=await fh.createWritable();
+      await w.write(blob);
+      await w.close();
+      setStatus("Saved \u2014 "+r.name,"ok");
+      return;
+    }catch(e){
+      if(e.name==="AbortError")return; // user cancelled picker
+    }
+  }
+  // Fallback: <a download> — iOS Safari / Firefox abre a UI padrão do browser
+  var a=document.createElement("a");
+  a.href=r.url;a.download=r.name;
+  document.body.appendChild(a);a.click();document.body.removeChild(a);
+}
+async function shareRec(idx){
+  var r=recordings[idx];
+  try{
+    var blob=await fetch(r.url).then(function(res){return res.blob();});
+    var file=new File([blob],r.name,{type:blob.type});
+    await navigator.share({files:[file],title:r.name});
+  }catch(e){
+    if(e.name!=="AbortError")setStatus("Share failed","err");
+  }
 }
 function newRec(){
   document.getElementById("dlSection").style.display="none";
