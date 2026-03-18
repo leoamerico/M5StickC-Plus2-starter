@@ -10,6 +10,7 @@
 #include "../lib/page_manager.h"
 #include "../lib/pages/clock_page.h"
 #include "../lib/pages/audio_stream_page.h"
+#include "../lib/pages/wifi_setup_page.h"
 
 DisplayHandler displayHandler;
 ClockHandler clockHandler(&displayHandler);
@@ -19,6 +20,7 @@ PageManager pageManager;
 SettingsManager* settings;
 ClockPage* clockPage = nullptr;
 AudioStreamPage* audioStreamPage = nullptr;
+WifiSetupPage* wifiSetupPage = nullptr;
 
 void beepAlarm() {
   M5.Speaker.begin();
@@ -33,27 +35,41 @@ void beepAlarm() {
 // Configure WiFi credentials via Serial monitor.
 // Send:  WIFI:MySSID:MyPassword
 // Response: OK or ERR
+// Rate-limited: one command per 2 seconds to prevent rapid-fire provisioning.
 void handleSerialCommands() {
+  static unsigned long lastCmd = 0;
   if (!Serial.available()) return;
+  unsigned long now = millis();
+  if (now - lastCmd < 2000) {
+    Serial.read(); // drain to avoid stale data
+    return;
+  }
   String line = Serial.readStringUntil('\n');
   line.trim();
+  if (line.length() > 128) { Serial.println("ERR: command too long"); return; }
   if (line.startsWith("WIFI:")) {
     int sep = line.indexOf(':', 5);
     if (sep < 0) { Serial.println("ERR: format WIFI:ssid:pass"); return; }
     String newSsid = line.substring(5, sep);
     String newPass = line.substring(sep + 1);
     if (newSsid.isEmpty()) { Serial.println("ERR: empty SSID"); return; }
+    if (newSsid.length() > 32 || newPass.length() > 64) {
+      Serial.println("ERR: SSID/pass too long"); return;
+    }
     Preferences prefs;
     prefs.begin("wifi", false);
     prefs.putString("ssid", newSsid);
     prefs.putString("pass", newPass);
     prefs.end();
-    Serial.printf("OK: SSID='%s' saved\n", newSsid.c_str());
+    lastCmd = now;
+    Serial.println("OK: credentials saved"); // não ecoa SSID (evita confirmação)
   }
 }
 
 void setup() {
   auto cfg = M5.config();
+  cfg.internal_imu = false;  // not used — saves ~4 KB Flash
+  cfg.internal_spk = false;  // released in startI2S() anyway
   M5.begin(cfg);
   M5.Display.setRotation(3);
   Serial.begin(115200);
@@ -67,6 +83,9 @@ void setup() {
 
   audioStreamPage = new AudioStreamPage(&displayHandler, &pageManager);
   pageManager.addPage(audioStreamPage);
+
+  wifiSetupPage = new WifiSetupPage(&displayHandler, &pageManager);
+  pageManager.addPage(wifiSetupPage);
 
   // @todo add a tag system using pref maybe to allow for different actions based of tags
   if (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_TIMER) {

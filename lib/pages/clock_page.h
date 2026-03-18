@@ -46,7 +46,6 @@ private:
     void rebuildMainMenu() {
         mainMenu->clear();
         
-        mainMenu->addItem("Start Pomodoro", [this]() { onStartPomodoro(); });
         mainMenu->addItem("Set Timer",      [this]() { onSetTimer(); });
         mainMenu->addItem("Audio Stream",   [this]() { onAudioStream(); });
         mainMenu->addItem("Device Info",    [this]() { onDeviceInfo(); });
@@ -70,10 +69,6 @@ private:
         settingsMenu->addItem("Set Time", [this]() { onSetTime(); });
         settingsMenu->addItem("Set Date", [this]() { onSetDate(); });
         settingsMenu->addItem("< Back", [this]() { closeMenu(); });
-    }
-    
-    void onStartPomodoro() {
-        clockHandler->armPomodoroAndSleep();
     }
     
     void onSetTimer() {

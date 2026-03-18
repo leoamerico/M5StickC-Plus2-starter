@@ -69,18 +69,18 @@ private:
                     M5.Display.printf("SSID: %.22s", ssid);
                     M5.Display.setCursor(6, 66);
                     M5.Display.print("A: Start stream");
+                    M5.Display.setCursor(4, SCREEN_H - 10);
+                    M5.Display.setTextColor(TFT_DARKGREY);
+                    M5.Display.print("A:start  B:back");
                 } else {
                     M5.Display.setTextColor(TFT_ORANGE);
                     M5.Display.print("No WiFi credentials");
                     M5.Display.setCursor(6, 66);
                     M5.Display.setTextColor(TFT_DARKGREY);
-                    M5.Display.print("Save SSID/pass in NVS");
-                    M5.Display.setCursor(6, 82);
-                    M5.Display.print("namespace: 'wifi'");
+                    M5.Display.print("A: Open WiFi Setup");
+                    M5.Display.setCursor(4, SCREEN_H - 10);
+                    M5.Display.print("A:setup  B:back");
                 }
-                M5.Display.setCursor(4, SCREEN_H - 10);
-                M5.Display.setTextColor(TFT_DARKGREY);
-                M5.Display.print("B:back");
                 break;
             }
             case ST_CONNECTING: {
@@ -125,7 +125,7 @@ private:
                 M5.Display.printf("WiFi RSSI: %d dBm", rssi);
 
                 M5.Display.setCursor(4, SCREEN_H - 10);
-                M5.Display.print("B:stop & back");
+                M5.Display.print("B:pause TP  PWR:speed  hold B:stop");
                 break;
             }
             case ST_ERROR: {
@@ -215,14 +215,38 @@ public:
         if (state == ST_IDLE || state == ST_ERROR) {
             if (hasCredentials()) {
                 doConnect();
+            } else {
+                pageManager->goToPage(2); // WiFi Setup
             }
         }
     }
 
-    // B short: stop stream and go back to ClockPage (index 0)
+    // B short: pause/resume teleprompter while streaming; back otherwise
     void onButtonBShortPress() override {
+        settings->resetInactivityTimer();
+        if (state == ST_STREAMING) {
+            audioStream->setTpCmd(1); // tp_pause event → browser toggles TP
+        } else {
+            doStop();
+            pageManager->goToPage(0);
+        }
+    }
+
+    // B long: stop stream and go back to ClockPage (index 0)
+    void onButtonBLongPress() override {
         doStop();
         pageManager->goToPage(0);
+    }
+
+    // PWR short: cycle teleprompter scroll speed while streaming
+    void onButtonPWRPressed() override {
+        settings->resetInactivityTimer();
+        if (state == ST_STREAMING) {
+            audioStream->setTpCmd(2); // tp_speed event → browser cycles speed
+        } else {
+            // Default: navigate up (via base class behaviour)
+            PageBase::onButtonPWRPressed();
+        }
     }
 };
 

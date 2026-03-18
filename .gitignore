@@ -6,6 +6,13 @@
 .vscode/settings.json
 todo.md
 
+# TLS credentials — never commit private keys
+secrets/tls_credentials.h
+secrets/*.pem
+
+# Auto-generated gzip header
+include/cam_page_gz.h
+
 # Playwright / Node
 e2e/node_modules/
 e2e/playwright-report/

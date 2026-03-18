@@ -16,7 +16,6 @@ private:
     DisplayHandler* display;
 public:
     Preferences prefs;
-    static const int POMODORO_MINUTES = 25;
     static const int CLOCK_REFRESH_MS = 1000;
 
     // Constructor
@@ -73,24 +72,16 @@ public:
             // Display date
             display->displaySubtitle(getCurrentFullDateFR());
             
-            // Display Pomodoro if active
+            // Display countdown if active
             if (remainSec > 0) {
-                char pomoText[32];
-                sprintf(pomoText, "Pomo: %02u:%02u", remainSec / 60, remainSec % 60);
-                display->displayInfoMessage(pomoText);
+                char timerText[32];
+                sprintf(timerText, "Timer: %02u:%02u", remainSec / 60, remainSec % 60);
+                display->displayInfoMessage(timerText);
             }
             
             lastMin = dt.time.minutes;
             lastRemain = remainSec;
         }
-    }
-
-    void armPomodoroAndSleep() {
-        display->clearScreen();
-        display->displayMainTitle("Pomodoro", MSG_SUCCESS);
-        delay(1500);
-        
-        armTimerAndSleep(POMODORO_MINUTES);
     }
 
     void armTimerAndSleep(uint32_t minutes) {
